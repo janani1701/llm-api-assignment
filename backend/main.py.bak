@@ -1,0 +1,249 @@
+import os
+import uuid
+import time
+import json
+import hashlib
+from fastapi import FastAPI, HTTPException, Header
+from dotenv import load_dotenv
+from pydantic import BaseModel
+from sqlalchemy import text
+from openai import OpenAI
+
+from db import engine, init_db
+
+load_dotenv()
+
+app = FastAPI()
+client = OpenAI()
+
+MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+CLIENT_API_TOKEN = os.getenv("CLIENT_API_TOKEN", "")
+RATE_LIMIT_PER_MIN = int(os.getenv("RATE_LIMIT_PER_MIN", "30"))
+
+# super simple in-memory rate limit: {token: [timestamps]}
+RATE_BUCKET = {}
+
+
+@app.on_event("startup")
+def startup():
+    init_db()
+
+
+@app.get("/health")
+def health():
+    return {
+        "ok": True,
+        "openai_key_loaded": bool(os.getenv("OPENAI_API_KEY", "")),
+        "client_token_set": bool(CLIENT_API_TOKEN),
+        "rate_limit_per_min": RATE_LIMIT_PER_MIN,
+    }
+
+
+def require_auth(authorization: str | None):
+    # If CLIENT_API_TOKEN not configured, allow (dev mode)
+    if not CLIENT_API_TOKEN:
+        return "dev"
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Bearer token")
+
+    token = authorization.split(" ", 1)[1].strip()
+    if token != CLIENT_API_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    return token
+
+
+def rate_limit(token: str):
+    now = time.time()
+    window_start = now - 60
+    timestamps = RATE_BUCKET.get(token, [])
+    timestamps = [t for t in timestamps if t >= window_start]
+
+    if len(timestamps) >= RATE_LIMIT_PER_MIN:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    timestamps.append(now)
+    RATE_BUCKET[token] = timestamps
+
+
+def hash_request(conversation_id: str, message: str, model: str) -> str:
+    payload = {"conversation_id": conversation_id, "message": message, "model": model}
+    raw = json.dumps(payload, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+class CreateConversationResponse(BaseModel):
+    conversation_id: str
+
+
+@app.post("/v1/conversations", response_model=CreateConversationResponse)
+def create_conversation(authorization: str | None = Header(default=None)):
+    require_auth(authorization)
+
+    conversation_id = "c_" + uuid.uuid4().hex
+    with engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO conversations (conversation_id) VALUES (:cid)"),
+            {"cid": conversation_id},
+        )
+    return {"conversation_id": conversation_id}
+
+
+class ChatRequest(BaseModel):
+    conversation_id: str
+    message: str
+
+
+@app.post("/v1/chat/completions")
+def chat(
+    req: ChatRequest,
+    authorization: str | None = Header(default=None),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    token = require_auth(authorization)
+    rate_limit(token)
+
+    # ---- Idempotency replay (HEADER) ----
+    if idempotency_key:
+        req_hash = hash_request(req.conversation_id, req.message, MODEL)
+
+        with engine.begin() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT request_hash, response_json
+                    FROM idempotency_keys
+                    WHERE idempotency_key = :k
+                """),
+                {"k": idempotency_key},
+            ).fetchone()
+
+        if row:
+            stored_hash, response_json = row
+            if stored_hash != req_hash:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Idempotency key reused with different request"
+                )
+            # replay exact same response
+            return json.loads(response_json)
+
+    request_id = "r_" + uuid.uuid4().hex
+    t0 = time.time()
+
+    # Ensure conversation exists
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT conversation_id FROM conversations WHERE conversation_id = :cid"),
+            {"cid": req.conversation_id},
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="conversation_id not found. Create one first.")
+
+    # Save user message
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO messages (conversation_id, role, content)
+                VALUES (:cid, :role, :content)
+            """),
+            {"cid": req.conversation_id, "role": "user", "content": req.message},
+        )
+
+    # Build messages[] from DB history (last N)
+    N = 12
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text("""
+                SELECT role, content
+                FROM messages
+                WHERE conversation_id = :cid
+                ORDER BY id DESC
+                LIMIT :lim
+            """),
+            {"cid": req.conversation_id, "lim": N},
+        ).fetchall()
+
+    history = [{"role": r[0], "content": r[1]} for r in rows][::-1]
+    system_msg = {
+        "role": "system",
+        "content": "You are a helpful assistant. Keep answers clear and concise."
+    }
+    messages = [system_msg] + history
+
+    # Call OpenAI
+    try:
+        resp = client.chat.completions.create(model=MODEL, messages=messages)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"OpenAI call failed: {str(e)}")
+
+    reply = resp.choices[0].message.content or ""
+    latency_ms = int((time.time() - t0) * 1000)
+
+    # Save assistant reply
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO messages (conversation_id, role, content)
+                VALUES (:cid, :role, :content)
+            """),
+            {"cid": req.conversation_id, "role": "assistant", "content": reply},
+        )
+
+    # Usage (may be None if not present)
+    prompt_tokens = completion_tokens = total_tokens = None
+    if getattr(resp, "usage", None):
+        prompt_tokens = resp.usage.prompt_tokens
+        completion_tokens = resp.usage.completion_tokens
+        total_tokens = resp.usage.total_tokens
+
+    # Insert usage event (ONLY ONCE)
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO usage_events (
+                    request_id, conversation_id, model,
+                    prompt_tokens, completion_tokens, total_tokens,
+                    latency_ms
+                )
+                VALUES (:rid, :cid, :model, :pt, :ct, :tt, :lat)
+            """),
+            {
+                "rid": request_id,
+                "cid": req.conversation_id,
+                "model": MODEL,
+                "pt": prompt_tokens,
+                "ct": completion_tokens,
+                "tt": total_tokens,
+                "lat": latency_ms,
+            },
+        )
+
+    response_obj = {
+        "request_id": request_id,
+        "conversation_id": req.conversation_id,
+        "reply": reply,
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "model": MODEL,
+            "latency_ms": latency_ms,
+        },
+    }
+
+    # Store idempotency response (if key provided)
+    if idempotency_key:
+        req_hash = hash_request(req.conversation_id, req.message, MODEL)
+        with engine.begin() as conn:
+            conn.execute(
+                text("""
+                    INSERT OR REPLACE INTO idempotency_keys (idempotency_key, request_hash, response_json)
+                    VALUES (:k, :h, :r)
+                """),
+                {"k": idempotency_key, "h": req_hash, "r": json.dumps(response_obj)},
+            )
+
+    return response_obj
+

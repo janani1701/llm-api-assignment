@@ -1,0 +1,24 @@
+# env / secrets
+.env
+backend/.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+backend/.venv/
+
+# sqlite db
+*.db
+backend/app.db
+
+# OS
+.DS_Store
+
+# protobuf generated (optional)
+# If you want to generate in CI instead, ignore:
+# chat_pb2.py
+# *_pb2.py
+
+# logs
+*.log

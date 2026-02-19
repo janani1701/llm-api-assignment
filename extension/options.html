@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>LLM Client Settings</title>
+    <style>
+      body { font-family: Arial; padding: 16px; max-width: 600px; }
+      label { display:block; margin-top: 12px; font-weight: 600; }
+      input { width: 100%; padding: 8px; margin-top: 6px; }
+      button { margin-top: 16px; padding: 10px 14px; }
+      .hint { color: #555; margin-top: 6px; font-size: 12px; }
+      .ok { margin-top: 12px; }
+    </style>
+  </head>
+  <body>
+    <h2>LLM API Assignment Client</h2>
+
+    <label>Backend Base URL</label>
+    <input id="baseUrl" placeholder="http://127.0.0.1:8080" />
+    <div class="hint">Example: http://127.0.0.1:8080</div>
+
+    <label>Client API Token</label>
+    <input id="token" placeholder="CLIENT_API_TOKEN value" />
+    <div class="hint">This is NOT your OpenAI key. This is your backend auth token.</div>
+
+    <button id="save">Save</button>
+    <div id="status" class="ok"></div>
+
+    <script src="options.js"></script>
+  </body>
+</html>
+

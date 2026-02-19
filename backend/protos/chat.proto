@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package llm;
+
+message ChatRequest {
+  string conversation_id = 1;
+  string message = 2;
+}
+
+message Usage {
+  int32 prompt_tokens = 1;
+  int32 completion_tokens = 2;
+  int32 total_tokens = 3;
+  string model = 4;
+  int32 latency_ms = 5;
+}
+
+message ChatResponse {
+  string request_id = 1;
+  string conversation_id = 2;
+  string reply = 3;
+  Usage usage = 4;
+}

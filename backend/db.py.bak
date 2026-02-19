@@ -1,0 +1,48 @@
+from sqlalchemy import create_engine, text
+
+DB_URL = "sqlite:///./app.db"
+engine = create_engine(DB_URL, future=True)
+
+def init_db():
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                conversation_id TEXT PRIMARY KEY,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+        """))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+        """))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS usage_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                prompt_tokens INTEGER,
+                completion_tokens INTEGER,
+                total_tokens INTEGER,
+                latency_ms INTEGER,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+        """))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS idempotency_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                request_hash TEXT NOT NULL,
+                response_json TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+        """))
+

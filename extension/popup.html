@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { font-family: Arial; width: 340px; padding: 12px; }
+      textarea { width: 100%; height: 80px; margin-top: 8px; }
+      button { width: 100%; margin-top: 10px; padding: 10px; }
+      #out { white-space: pre-wrap; margin-top: 10px; font-size: 13px; }
+      .row { margin-top: 8px; }
+      .small { font-size: 12px; color: #666; }
+      a { color: #0b57d0; text-decoration: none; }
+    </style>
+  </head>
+  <body>
+    <h3 style="margin:0">LLM Chat</h3>
+    <div class="small">
+      Settings: <a href="#" id="openOptions">open</a>
+    </div>
+
+    <div class="row">
+      <textarea id="msg" placeholder="Type your message...">Tell me a 1 line joke</textarea>
+    </div>
+
+    <button id="send">Send</button>
+
+    <div id="out"></div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
+
