@@ -191,6 +191,36 @@ python send_pb.py
 
 ---
 
+## Chrome Extension (Client)
+
+The Chrome extension lives in `extension/` (Manifest V3). It is a minimal popup UI that calls the FastAPI backend.
+
+### What it does
+- Opens a popup chat UI (input + send).
+- Creates/reuses a `conversation_id` by calling `POST /v1/conversations`.
+- Sends messages via `POST /v1/chat/completions` (JSON) and renders the reply.
+- **Never stores the OpenAI API key**. The OpenAI key is only loaded on the backend from `backend/.env`.
+
+### Endpoints used by the extension
+- `POST /v1/conversations`
+- `POST /v1/chat/completions`
+(Optional) `POST /v1/chat/completions.pb`
+
+### Load the extension in Chrome (from scratch)
+1. Open Chrome and go to: `chrome://extensions`
+2. Turn **Developer mode** ON (top-right)
+3. Click **Load unpacked**
+4. Select the folder: `llm-api-assignment/extension`
+
+After loading, you should see the extension icon in the toolbar. Click it to open the popup UI.
+
+### Backend must be running
+From `backend/`:
+
+```bash
+source .venv/bin/activate
+uvicorn main:app --reload --port 8080
+
 ## Database tables (SQLite)
 
 conversations(conversation_id, created_at)  
