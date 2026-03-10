@@ -1,5 +1,5 @@
 
-# LLM API Assignment (FastAPI + SQLite + Usage + Metrics + Protobuf)
+# LLM Chat API with Chrome Extension Cient (FastAPI + SQLite + Usage + Metrics + Protobuf)
 
 This project turns a “web client chatbot” idea into a real backend LLM API that a client (Chrome extension/web UI) can call securely.
 
